@@ -100,15 +100,20 @@ namespace gobitgo {
     let ENCODER_TICKS_PER_ROTATION = 6
     let MOTOR_TICKS_PER_DEGREE = (MOTOR_GEAR_RATIO * ENCODER_TICKS_PER_ROTATION) / 360
 
-    let init_done = false;
-
+    let LINE_FOLLOWER_WHITE_THRESHOLD = 150
+    let LINE_FOLLOWER_BLACK_THRESHOLD = 175
     let MOTOR_LEFT = 0x01
     let MOTOR_RIGHT = 0x02
     let ADDR = 0x04
+
+    let init_done = false;
+
     let left_motor_dps = WhichSpeed.Normal
     let right_motor_dps = WhichSpeed.Normal
     let left_dir = WhichDriveDirection.Forward
     let right_dir = WhichDriveDirection.Forward
+    let line_sensor = [0, 0, 0, 0, 0]
+    let in_movement = false
 
     function reset_encoders() {
         //set_motor_power(WhichMotor.Both, 0)
@@ -152,8 +157,6 @@ namespace gobitgo {
             return false
     }
 
-
-
     function offset_motor_encoder(motor: WhichUniqueMotor, offset: number) {
         offset = offset * MOTOR_TICKS_PER_DEGREE
         let buf = pins.createBuffer(6)
@@ -170,6 +173,20 @@ namespace gobitgo {
         buf.setNumber(NumberFormat.UInt8BE, 5, offset & 0xFF)
         pins.i2cWriteBuffer(ADDR, buf, false);
 
+    }
+
+    function is_black(s: number): boolean {
+        if (s > LINE_FOLLOWER_BLACK_THRESHOLD) {
+            return true
+        }
+        return false
+    }
+
+    function is_white(s: number): boolean {
+        if (s < LINE_FOLLOWER_WHITE_THRESHOLD) {
+            return true
+        }
+        return false
     }
 
     ////////// BLOCKS
@@ -200,6 +217,7 @@ namespace gobitgo {
 
         set_motor_position(WhichMotor.Left, left_final_pos)
         set_motor_position(WhichMotor.Right, right_final_pos)
+        in_movement = true
 
         while (!target_reached(left_final_pos, right_final_pos)) {
         }
@@ -211,8 +229,9 @@ namespace gobitgo {
         if (dir == WhichDriveDirection.Backward) {
             dir_factor = -1
         }
-        set_motor_dps(WhichMotor.Left, left_motor_dps * dir_factor)
-        set_motor_dps(WhichMotor.Right, right_motor_dps * dir_factor)
+        let avg_dps = (left_motor_dps + right_motor_dps) / 2
+        set_motor_dps(WhichMotor.Both, avg_dps * dir_factor)
+        in_movement = true
     }
 
     //% blockId="gobitgo_turn_X" block="turn %deg | degrees | %turn_dir"
@@ -233,6 +252,7 @@ namespace gobitgo {
 
         set_motor_position(MOTOR_LEFT, left_final_position)
         set_motor_position(MOTOR_RIGHT, right_final_position)
+        in_movement = true
         while (!target_reached(left_final_position, right_final_position)) {
         }
     }
@@ -276,8 +296,77 @@ namespace gobitgo {
     //% blockId="gobitgo_stop" block="stop"
     export function stop() {
         init()
+        in_movement = false
         set_motor_power(WhichMotor.Both, 0)
     }
+
+
+    /**
+     * Will return true if the whole line sensor is reading black, like when it's over a black square
+    */
+    //% blockId="gobitgo_test_black_line" block="black line is detected"
+    export function test_black_line(): boolean {
+        get_raw_line_sensors()
+        for (let _i = 0; _i < line_sensor.length; _i++) {
+            if (line_sensor[_i] < LINE_FOLLOWER_WHITE_THRESHOLD) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * Will return true if the whole line sensor is reading white, like when it's over a blank page
+    */
+    //% blockId="gobitgo_test_white_line" block="white line is detected"
+    export function test_white_line(): boolean {
+        get_raw_line_sensors()
+        for (let _i = 0; _i < line_sensor.length; _i++) {
+            if (line_sensor[_i] > LINE_FOLLOWER_BLACK_THRESHOLD) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * Will follow a black line until it finds itself over a black square or a white square
+    */
+    //% blockId="gobitgo_follow_line" block="follow the line"
+    export function follow_line() {
+        let line_status = 0b00000
+        in_movement = true
+        while (in_movement) {
+            get_raw_line_sensors()
+            line_status = 0b00000
+            for (let _i = 0; _i < line_sensor.length; _i++) {
+                if (line_sensor[_i] > LINE_FOLLOWER_BLACK_THRESHOLD) {
+                    line_status += 0b1 << _i
+                }
+                else if (line_sensor[_i] < LINE_FOLLOWER_WHITE_THRESHOLD) {
+                    line_status += 0b0 << _i
+                }
+            }
+            // if all black or all white
+            if (line_status == 0b11111 || line_status == 0b0000) {
+                stop()
+                in_movement = false
+            }
+            // if centered
+            if (line_status == 0b01110 || line_status == 0b00100) {
+                drive_straight(WhichDriveDirection.Forward)
+            }
+            // if erring to the right
+            else if (line_status == 0b11110 || line_status == 0b11100 || line_status == 0b11000 || line_status == 0b10000) {
+                turn(WhichTurnDirection.Left)
+            }
+            // if erring to the left
+            else if (line_status == 0b01111 || line_status == 0b00111 || line_status == 0b00011 || line_status == 0b00001) {
+                turn(WhichTurnDirection.Right)
+            }
+        }
+    }
+
 
     /////////// MORE BLOCKS
 
@@ -344,14 +433,17 @@ namespace gobitgo {
         buf.setNumber(NumberFormat.UInt8BE, 2, (speed >> 8) & 0xFF)
         buf.setNumber(NumberFormat.UInt8BE, 3, speed & 0xFF)
 
-        if (motor != WhichMotor.Right) {
+        if (motor == WhichMotor.Left) {
             buf.setNumber(NumberFormat.UInt8BE, 1, MOTOR_LEFT)
-            pins.i2cWriteBuffer(ADDR, buf, false);
         }
-        if (motor != WhichMotor.Left) {
+        else if (motor == WhichMotor.Right) {
             buf.setNumber(NumberFormat.UInt8BE, 1, MOTOR_RIGHT)
-            pins.i2cWriteBuffer(ADDR, buf, false);
+
         }
+        else if (motor == WhichMotor.Both) {
+            buf.setNumber(NumberFormat.UInt8BE, 1, MOTOR_LEFT + MOTOR_RIGHT)
+        }
+        pins.i2cWriteBuffer(ADDR, buf, false);
     }
 
     //% blockId="gobitgo_set_motor_dps_limit" block="set rotational speed limit on %motor| to | %position"
@@ -365,14 +457,16 @@ namespace gobitgo {
         buf.setNumber(NumberFormat.UInt8BE, 3, (speed >> 8) & 0xFF)
         buf.setNumber(NumberFormat.UInt8BE, 4, speed & 0xFF)
 
-        if (motor != WhichMotor.Right) {
+        if (motor == WhichMotor.Left) {
             buf.setNumber(NumberFormat.UInt8BE, 1, MOTOR_LEFT)
-            pins.i2cWriteBuffer(ADDR, buf, false);
         }
-        if (motor != WhichMotor.Left) {
+        else if (motor == WhichMotor.Right) {
             buf.setNumber(NumberFormat.UInt8BE, 1, MOTOR_RIGHT)
-            pins.i2cWriteBuffer(ADDR, buf, false);
         }
+        else {
+            buf.setNumber(NumberFormat.UInt8BE, 1, MOTOR_LEFT + MOTOR_RIGHT)
+        }
+        pins.i2cWriteBuffer(ADDR, buf, false);
     }
 
     //% blockId="gobitgo_get_motor_position" block="encoder position for %motor"
@@ -388,8 +482,8 @@ namespace gobitgo {
         }
 
         pins.i2cWriteBuffer(ADDR, buf)
-        let val = pins.i2cReadBuffer(ADDR, 32)
-        let encoder = val.getNumber(NumberFormat.Int32BE, 0) / MOTOR_TICKS_PER_DEGREE
+        let val = pins.i2cReadBuffer(ADDR, 4)
+        let encoder = val.getNumber(NumberFormat.Int8BE, 0) / MOTOR_TICKS_PER_DEGREE
         return encoder
     }
 
@@ -405,7 +499,7 @@ namespace gobitgo {
         let buf = pins.createBuffer(1)
         buf.setNumber(NumberFormat.UInt8BE, 0, I2C_Commands.GET_FIRMWARE_VERSION)
         pins.i2cWriteBuffer(ADDR, buf)
-        let val = pins.i2cReadBuffer(ADDR, 16)
+        let val = pins.i2cReadBuffer(ADDR, 2)
         return val.getNumber(NumberFormat.UInt16BE, 0);
     }
 
@@ -420,11 +514,24 @@ namespace gobitgo {
         init()
         let buf = pins.createBuffer(1)
         buf.setNumber(NumberFormat.UInt8BE, 0, I2C_Commands.GET_VOLTAGE_BATTERY)
-        pins.i2cWriteBuffer(0x04, buf)
-        let val = pins.i2cReadBuffer(ADDR, 16)
+        pins.i2cWriteBuffer(ADDR, buf)
+        let val = pins.i2cReadBuffer(ADDR, 2)
         return val.getNumber(NumberFormat.UInt16BE, 0);
     }
 
+
+    //% blockId="gobitgo_read_raw_line_sensors" block="raw line sensors (x5)"
+    //% advanced=true
+    export function get_raw_line_sensors(): number[] {
+        let buf = pins.createBuffer(1)
+        buf.setNumber(NumberFormat.UInt8BE, 0, I2C_Commands.GET_LINE_SENSORS)
+        pins.i2cWriteBuffer(ADDR, buf)
+        let raw_buffer = pins.i2cReadBuffer(ADDR, 7)
+        for (let _i = 0; _i < line_sensor.length; _i++) {
+            line_sensor[_i] = raw_buffer.getNumber(NumberFormat.UInt8BE, _i)
+        }
+        return line_sensor
+    }
 
 
 }
