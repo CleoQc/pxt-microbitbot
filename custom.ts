@@ -141,7 +141,7 @@ namespace gobitgo {
     }
 
     function target_reached(left_target_degrees: number, right_target_degrees: number): boolean {
-        let tolerance = 25
+        let tolerance = 5
         let min_left_target = left_target_degrees - tolerance
         let max_left_target = left_target_degrees + tolerance
         let min_right_target = right_target_degrees - tolerance
