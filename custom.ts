@@ -77,10 +77,20 @@ enum I2C_Commands {
     SET_MOTOR_LIMITS
 }
 
+enum I2C_Sensors {
+    I2C_DISTANCE_SENSOR = 0x2A
+}
+
 /**
  * Custom blocks
  */
-//% weight=100 color=#0fbc11 icon="\uf0d1"
+
+//% weight=80 color=#0fbc11 icon="\uf0d1"
+namespace distancesensor {
+
+}
+
+//% weight=99 color=#0fbc11 icon="\uf0d1"
 namespace gobitgo {
     /**
      * TODO: describe your function here
@@ -88,7 +98,7 @@ namespace gobitgo {
      * @param s describe parameter here, eg: "Hello"
      * @param e describe parameter here
      */
-    // let ADDR = 0x04
+
     let PIMULT = 31416
     let PIDIV = 10000
     let WHEEL_BASE_WIDTH = 108
@@ -130,16 +140,8 @@ namespace gobitgo {
         init_done = true;
     }
 
-    function write8(register: number, value: number) {
-        let buf = pins.createBuffer(2)
-        // basic.showNumber(value)
-        buf.setNumber(NumberFormat.UInt8BE, 0, register)
-        buf.setNumber(NumberFormat.UInt8BE, 1, value)
-        pins.i2cWriteBuffer(ADDR, buf, false);
-    }
-
     function target_reached(left_target_degrees: number, right_target_degrees: number): boolean {
-        let tolerance = 5
+        let tolerance = 25
         let min_left_target = left_target_degrees - tolerance
         let max_left_target = left_target_degrees + tolerance
         let min_right_target = right_target_degrees - tolerance
@@ -148,10 +150,22 @@ namespace gobitgo {
         let current_left_position = get_motor_position(WhichUniqueMotor.Left)
         let current_right_position = get_motor_position(WhichUniqueMotor.Right)
 
-        if (current_left_position > min_left_target &&
-            current_left_position < max_left_target &&
-            current_right_position > min_right_target &&
-            current_right_position < max_right_target)
+        let right_is_reached = 0
+        let left_is_reached = 0
+
+        if (current_left_position > min_left_target) {
+            left_is_reached += 1
+        }
+        if (current_left_position < max_left_target) {
+            left_is_reached += 1
+        }
+        if (current_right_position > min_right_target) {
+            right_is_reached += 1
+        }
+        if (current_right_position < max_right_target) {
+            right_is_reached += 1
+        }
+        if (left_is_reached == 2 && right_is_reached == 2)
             return true
         else
             return false
@@ -241,13 +255,11 @@ namespace gobitgo {
         if (turn_dir == WhichTurnDirection.Left) {
             wheel_turn_degrees *= -1
         }
-        basic.showNumber(wheel_turn_degrees)
+
         let left_start_position = get_motor_position(WhichUniqueMotor.Left)
         let right_start_position = get_motor_position(WhichUniqueMotor.Right)
-        basic.showNumber(right_start_position)
-        let left_final_position = left_start_position + wheel_turn_degrees
-        let right_final_position = right_start_position - wheel_turn_degrees
-        basic.showNumber(right_final_position)
+        let left_final_position = left_start_position - wheel_turn_degrees
+        let right_final_position = right_start_position + wheel_turn_degrees
 
 
         set_motor_position(MOTOR_LEFT, left_final_position)
@@ -293,6 +305,9 @@ namespace gobitgo {
 
     }
 
+    /**
+    * stops the robot
+    */
     //% blockId="gobitgo_stop" block="stop"
     export function stop() {
         init()
@@ -300,39 +315,10 @@ namespace gobitgo {
         set_motor_power(WhichMotor.Both, 0)
     }
 
-
-    /**
-     * Will return true if the whole line sensor is reading black, like when it's over a black square
-    */
-    //% blockId="gobitgo_test_black_line" block="black line is detected"
-    export function test_black_line(): boolean {
-        get_raw_line_sensors()
-        for (let _i = 0; _i < line_sensor.length; _i++) {
-            if (line_sensor[_i] < LINE_FOLLOWER_WHITE_THRESHOLD) {
-                return false
-            }
-        }
-        return true
-    }
-
-    /**
-     * Will return true if the whole line sensor is reading white, like when it's over a blank page
-    */
-    //% blockId="gobitgo_test_white_line" block="white line is detected"
-    export function test_white_line(): boolean {
-        get_raw_line_sensors()
-        for (let _i = 0; _i < line_sensor.length; _i++) {
-            if (line_sensor[_i] > LINE_FOLLOWER_BLACK_THRESHOLD) {
-                return false
-            }
-        }
-        return true
-    }
-
     /**
      * Will follow a black line until it finds itself over a black square or a white square
     */
-    //% blockId="gobitgo_follow_line" block="follow the line"
+    //% blockId="gobitgo_follow_line" block="follow the black line"
     export function follow_line() {
         let line_status = 0b00000
         in_movement = true
@@ -367,6 +353,34 @@ namespace gobitgo {
         }
     }
 
+
+    /**
+     * Will return true if the whole line sensor is reading black, like when it's over a black square
+    */
+    //% blockId="gobitgo_test_black_line" block="black line is detected"
+    export function test_black_line(): boolean {
+        get_raw_line_sensors()
+        for (let _i = 0; _i < line_sensor.length; _i++) {
+            if (line_sensor[_i] < LINE_FOLLOWER_WHITE_THRESHOLD) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * Will return true if the whole line sensor is reading white, like when it's over a blank page
+    */
+    //% blockId="gobitgo_test_white_line" block="white line is detected"
+    export function test_white_line(): boolean {
+        get_raw_line_sensors()
+        for (let _i = 0; _i < line_sensor.length; _i++) {
+            if (line_sensor[_i] > LINE_FOLLOWER_BLACK_THRESHOLD) {
+                return false
+            }
+        }
+        return true
+    }
 
     /////////// MORE BLOCKS
 
@@ -480,10 +494,10 @@ namespace gobitgo {
         if (motor == WhichUniqueMotor.Right) {
             buf.setNumber(NumberFormat.UInt8BE, 0, I2C_Commands.GET_ENCODER_RIGHT)
         }
-
         pins.i2cWriteBuffer(ADDR, buf)
+
         let val = pins.i2cReadBuffer(ADDR, 4)
-        let encoder = val.getNumber(NumberFormat.Int8BE, 0) / MOTOR_TICKS_PER_DEGREE
+        let encoder = val.getNumber(NumberFormat.Int32BE, 0) / MOTOR_TICKS_PER_DEGREE
         return encoder
     }
 
