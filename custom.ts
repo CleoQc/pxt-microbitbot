@@ -229,8 +229,8 @@ namespace gobitgo {
         let left_final_pos = left_starting_pos + wheel_turn_degrees
         let right_final_pos = right_starting_pos + wheel_turn_degrees
 
-        set_motor_position(WhichMotor.Left, left_final_pos)
-        set_motor_position(WhichMotor.Right, right_final_pos)
+        set_motor_position(WhichMotor.Both, left_final_pos)
+        // set_motor_position(WhichMotor.Right, right_final_pos)
         in_movement = true
 
         while (!target_reached(left_final_pos, right_final_pos)) {
