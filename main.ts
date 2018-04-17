@@ -4,4 +4,4 @@ input.onButtonPressed(Button.B, () => {
 input.onButtonPressed(Button.A, () => {
     gobitgo.follow_line()
 })
-basic.showNumber(0)
+
