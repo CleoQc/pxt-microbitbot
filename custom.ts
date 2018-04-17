@@ -212,7 +212,7 @@ namespace gobitgo {
         right_dir = dir
         let a = 0;
         if (unit == WhichUnitSystem.inches) {
-            dist = dist * 100 / 254
+            dist = dist * 254 / 10
         }
         if (dir == WhichDriveDirection.Backward) {
             dist = dist * -1
